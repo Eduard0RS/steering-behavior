@@ -1,127 +1,140 @@
 import pygame
+import sys
 import random
 from pygame.math import Vector2
 
-# Variáveis de configuração
+# Configurações da tela
 WIDTH = 800
 HEIGHT = 600
-BG_COLOR = (255, 255, 255)
-PEDESTRIAN_COLOR = (0, 0, 0)
-LANE_COLOR = (200, 200, 200)
-NUM_PEDESTRIANS = 30
-MAX_SPEED = 2
-RADIUS = 10
 
-# Classe Pedestrian
-class Pedestrian(pygame.sprite.Sprite):
-    def __init__(self, position):
-        super().__init__()
-        self.target = Vector2(0, 0)
-        self.image = pygame.Surface((RADIUS * 2, RADIUS * 2))
-        self.image.fill(BG_COLOR)
-        self.rect = self.image.get_rect(center=position)
-        self.position = Vector2(position)
-        self.velocity = Vector2(0, random.uniform(-0.5, 0.5))
-        self.triangle_points = [
-            Vector2(position[0], position[1] - RADIUS),
-            Vector2(position[0] - RADIUS, position[1] + RADIUS),
-            Vector2(position[0] + RADIUS, position[1] + RADIUS)
-        ]
+# Cores
+WHITE = (255, 255, 255)
+RED = (255, 0, 0)
+BLACK = (0, 0, 0)
+YELLOW = (255, 255, 0)
 
-        # Variável para controle da formação de vias
-        self.lane_alignment_weight = 0.1
+# Constantes
+NUMBER_AGENTS = 30
+AGENT_RADIUS = 10
+DECELERATION_RADIUS = 100
 
-    def update(self, pedestrians):
-        avoidance_radius = 50
-        alignment_radius = 100
-        cohesion_radius = 100
 
-        separation = Vector2(0, 0)
-        alignment = Vector2(0, 0)
-        cohesion = Vector2(0, 0)
+class Agent:
+    def __init__(self):
+        self.position = Vector2(random.randint(0, WIDTH), random.randint(0, HEIGHT))
+        self.velocity = Vector2(0, 0)
+        self.acceleration = Vector2(0, 0)
+        self.max_speed = 3
+        self.max_force = 0.1
+        self.heading = 0  # Ângulo de rotação do triângulo
 
-        lane_direction = Vector2(1, 0)
+    def seek(self, target):
+        desired = target - self.position
 
-        for other in pedestrians:
-            direction= self.target - self.position
-            direction.scale_to_length(MAX_SPEED)
-            self.velocity = direction
-            if other != self:
-                distance = self.position.distance_to(other.position)
+        # Calcula a distância até o alvo
+        distance = desired.length()
 
-                if distance < avoidance_radius:
-                    diff = self.position - other.position
-                    diff.scale_to_length(avoidance_radius / distance)
-                    separation += diff
+        if distance > 0:
+            # Verifica se o agente está dentro da zona de desaceleração
+            if distance < DECELERATION_RADIUS:
+                # Calcula a velocidade proporcional à distância, diminuindo gradualmente
+                speed = self.max_speed * (distance / DECELERATION_RADIUS)
+            else:
+                speed = self.max_speed
 
-                if distance < alignment_radius:
-                    alignment += other.velocity
+            desired = desired.normalize() * speed
 
-                if distance < cohesion_radius:
-                    cohesion += other.position
-                
-                lane_direction += other.velocity * self.lane_alignment_weight
+        steering = desired - self.velocity
+        steering = self.limit_vector(steering, self.max_force)
+        return steering
 
-        num_pedestrians = len(pedestrians)
-        if num_pedestrians > 1:
-            if alignment.length() > 0:
-                alignment /= (num_pedestrians - 1)
-                alignment.scale_to_length(MAX_SPEED)
+    def avoid_collision(self, agents):
+        avoidance_force = Vector2(0, 0)
+        detection_radius = 2 * AGENT_RADIUS
 
-            cohesion /= (num_pedestrians - 1)
-            cohesion = (cohesion - self.position)
-            cohesion.scale_to_length(MAX_SPEED)
+        for other_agent in agents:
+            if other_agent != self:
+                to_other_agent = other_agent.position - self.position
+                distance = to_other_agent.length()
 
-        lane_direction.scale_to_length(1)
+                if 0 < distance < detection_radius:
+                    avoidance_force -= to_other_agent.normalize() / distance
 
-        alignment += lane_direction * MAX_SPEED
+        avoidance_force = self.limit_vector(avoidance_force, self.max_force)
+        return avoidance_force
 
-        self.velocity += separation + alignment + cohesion
+    def update(self, target, agents):
+        avoidance_force = self.avoid_collision(agents)
+        seek_force = self.seek(target)
 
-        if self.velocity.length() > 0:
-            self.velocity.scale_to_length(MAX_SPEED)
-
+        self.acceleration = avoidance_force + seek_force
+        self.velocity += self.acceleration
+        self.velocity = self.limit_vector(self.velocity, self.max_speed)
         self.position += self.velocity
 
-        self.rect.center = self.position
-        self.triangle_points = [
-            Vector2(self.position[0], self.position[1] - RADIUS),
-            Vector2(self.position[0] - RADIUS, self.position[1] + RADIUS),
-            Vector2(self.position[0] + RADIUS, self.position[1] + RADIUS)
-        ]
+        self.heading = self.velocity.angle_to(Vector2(1, 0))
 
-# Inicialização do Pygame
-pygame.init()
-screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("Formação de Faixas de Pedestres")
-clock = pygame.time.Clock()
+    def limit_vector(self, vector, max_value):
+        if vector.length() > max_value:
+            vector = vector.normalize() * max_value
+        return vector
 
-# Criação dos pedestres
-all_pedestrians = pygame.sprite.Group()
-for _ in range(NUM_PEDESTRIANS):
-    position = (random.randint(RADIUS, WIDTH - RADIUS), random.randint(RADIUS, HEIGHT - RADIUS))
-    pedestrian = Pedestrian(position)
-    all_pedestrians.add(pedestrian)
+    def draw(self, screen):
+        v1 = self.position + self.velocity.normalize() * AGENT_RADIUS
+        v2 = self.position + self.velocity.normalize().rotate(135) * AGENT_RADIUS
+        v3 = self.position + self.velocity.normalize().rotate(-135) * AGENT_RADIUS
 
-# Loop principal do jogo
-running = True
-while running:
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            running = False
-        mouse_pos = pygame.mouse.get_pos()
+        pygame.draw.polygon(screen, BLACK, [v1, v2, v3])
 
-    all_pedestrians.update(all_pedestrians)
+    def collide(self, other_agent):
+        # Calcula a distância entre os agentes
+        distance = self.position.distance_to(other_agent.position)
+        combined_radius = AGENT_RADIUS * 2
 
-    # Desenho na tela
-    screen.fill(BG_COLOR)
-    for pedestrian in all_pedestrians:
-        pedestrian.target = Vector2(mouse_pos[0], mouse_pos[1])
-        pygame.draw.polygon(screen, PEDESTRIAN_COLOR, pedestrian.triangle_points)
-    pygame.draw.line(screen, LANE_COLOR, (0, HEIGHT // 2), (WIDTH, HEIGHT // 2), 2)
+        # Verifica se ocorre colisão com base na distância e no raio dos agentes
+        if distance < combined_radius:
+            return True
+        else:
+            return False
 
-    pygame.display.flip()
-    clock.tick(60)
 
-# Encerramento do Pygame
-pygame.quit()
+def main():
+    pygame.init()
+    screen = pygame.display.set_mode((WIDTH, HEIGHT))
+    clock = pygame.time.Clock()
+
+    agents = []
+    for _ in range(NUMBER_AGENTS):
+        agent = Agent()
+        agents.append(agent)
+
+    target = Vector2(WIDTH // 2, HEIGHT // 2)
+
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+        pos = pygame.mouse.get_pos()
+        target = Vector2(pos[0], pos[1])
+        screen.fill(WHITE)
+
+        for agent in agents:
+            agent.update(target, agents)
+
+            # Verifica colisões com outros agentes
+            for other_agent in agents:
+                if agent != other_agent and agent.collide(other_agent):
+                    # Ajusta a posição do agente para evitar a colisão
+                    agent.position -= agent.velocity
+
+            agent.draw(screen)
+
+        pygame.draw.circle(screen, RED, (int(target.x), int(target.y)), 5)
+
+        pygame.display.flip()
+        clock.tick(60)
+
+
+if __name__ == '__main__':
+    main()
