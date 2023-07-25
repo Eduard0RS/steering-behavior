@@ -1,7 +1,6 @@
 import pygame
 import sys
 import random
-import math
 from pygame.math import Vector2
 
 # Configurações da tela
@@ -17,12 +16,12 @@ YELLOW = (255, 255, 0)
 # Constantes
 NUMBER_AGENTS = 30
 AGENT_RADIUS = 10
-ARC_RADIUS = 200
-ARC_ANGLE = 90
+DECELERATION_RADIUS = 100
+
 
 class Agent:
-    def __init__(self, position):
-        self.position = position
+    def __init__(self):
+        self.position = Vector2(random.randint(0, WIDTH), random.randint(0, HEIGHT))
         self.velocity = Vector2(0, 0)
         self.acceleration = Vector2(0, 0)
         self.max_speed = 3
@@ -31,7 +30,20 @@ class Agent:
 
     def seek(self, target):
         desired = target - self.position
-        desired = desired.normalize() * self.max_speed
+
+        # Calcula a distância até o alvo
+        distance = desired.length()
+
+        if distance > 0:
+            # Verifica se o agente está dentro da zona de desaceleração
+            if distance < DECELERATION_RADIUS:
+                # Calcula a velocidade proporcional à distância, diminuindo gradualmente
+                speed = self.max_speed * (distance / DECELERATION_RADIUS)
+            else:
+                speed = self.max_speed
+
+            desired = desired.normalize() * speed
+
         steering = desired - self.velocity
         steering = self.limit_vector(steering, self.max_force)
         return steering
@@ -74,6 +86,17 @@ class Agent:
 
         pygame.draw.polygon(screen, BLACK, [v1, v2, v3])
 
+    def collide(self, other_agent):
+        # Calcula a distância entre os agentes
+        distance = self.position.distance_to(other_agent.position)
+        combined_radius = AGENT_RADIUS * 2
+
+        # Verifica se ocorre colisão com base na distância e no raio dos agentes
+        if distance < combined_radius:
+            return True
+        else:
+            return False
+
 
 def main():
     pygame.init()
@@ -81,30 +104,34 @@ def main():
     clock = pygame.time.Clock()
 
     agents = []
-    target = Vector2(WIDTH // 2, HEIGHT // 2)
-
-    # Posição central do arco
-    arc_center = Vector2(WIDTH // 2, HEIGHT // 2)
-
-    # Criação dos agentes em uma formação de arco
-    for i in range(NUMBER_AGENTS):
-        angle = math.radians(i / (NUMBER_AGENTS - 1) * ARC_ANGLE - ARC_ANGLE / 2)
-        position = Vector2(arc_center.x + ARC_RADIUS * math.cos(angle),
-                           arc_center.y + ARC_RADIUS * math.sin(angle))
-        agent = Agent(position)
+    for _ in range(NUMBER_AGENTS):
+        agent = Agent()
         agents.append(agent)
+
+    target = Vector2(WIDTH // 2, HEIGHT // 2)
 
     while True:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit()
                 sys.exit()
-
+        pos = pygame.mouse.get_pos()
+        target = Vector2(pos[0], pos[1])
         screen.fill(WHITE)
-        position = pygame.mouse.get_pos()
-        target = Vector2(position[0], position[1])
+
         for agent in agents:
             agent.update(target, agents)
+
+            # Verifica colisões com outros agentes
+            for other_agent in agents:
+                if agent != other_agent and agent.collide(other_agent):
+                    # Ajusta a posição do agente para formar um arco
+                    agent.position = agent.position.rotate(0.2)
+
+
+
+                    
+
             agent.draw(screen)
 
         pygame.draw.circle(screen, RED, (int(target.x), int(target.y)), 5)
